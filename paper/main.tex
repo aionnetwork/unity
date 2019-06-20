@@ -45,17 +45,17 @@
 \title{A Unifying Hybrid Consensus Protocol}
 
 \author{
-  Wu, Yulong\\
+  Yulong Wu\\
   \texttt{yulong@aion.network}
   \and
-  Zha, Yunfei\\
+  Yunfei Zha\\
   \texttt{frederic@aion.network}
   \and
-  Sun, Yao\\
+  Yao Sun\\
   \texttt{yao@aion.network}
 }
 
-\date{v0.1.1 - \today}
+\date{v0.1.2 - \today}
 
 \begin{document}
 
@@ -152,15 +152,16 @@ Treat $hash(\cdot)$ as a random oracle with uniform distribution in $\mathbb{N}_
     \label{mining_algo}
     \begin{algorithmic}[1]
         \Procedure{MINEBLOCK}{$\delta$}\Comment{The mining loop}
-        \State $b_h \gets \Call{GetHeadBlock}$\Comment{Get chain tip}
-        \State $b_w \gets \Call{GetLastPoWBlock}{b_h}$\Comment{Get latest PoW block on chain}
-        \State $t   \gets \Call{GetMemPoolTxs}$
-        \State $b   \gets \Call{CreateBlockTemplate}{b_h, t}$
-        \State $d_w \gets \Call{GetDifficulty}{b}$
+        \State $c    \gets \Call{GetBestChain}{}$
+        \State $b_1  \gets \Call{GetLastPowBlock}{c}$
+        \State $b_2  \gets \Call{GetSecondLastPowBlock}{c}$
+        \State $diff \gets \Call{GetDifficulty}{b_1, b_2}$
+        \State $txs  \gets \Call{GetMemPoolTxs}$
+        \State $b    \gets \Call{CreatePowBlockTemplate}{c, txs}$
         \Do
-            \State $hit \gets \Call{PoW}{b}$
-        \doWhile{$hit > 2^{256}/d_w$}
-        \State $b   \gets \Call{Finalize}{b, hit}$
+            \State $solution \gets \Call{PoW}{b}$
+        \doWhile{$solution > 2^{256}/diff$}
+        \State $b    \gets \Call{Finalize}{b, solution}$
         \State $\Call{ImportAndPropagate}{b}$
         \EndProcedure
   \end{algorithmic}
@@ -178,7 +179,7 @@ For the given staker, a PoS block can be produced if and only if
 \end{equation}
 where $V$ is the amount of stake (or voting power) and $\Delta$ is the time elapsed since the last PoS block. The $\Delta$ can also be computed by solving
 \begin{equation}
-\Delta \geq \frac{d_s \cdot ln({2^{256}}/{hash(seed)})}{V}.
+\Delta \geq \frac{d_s \cdot \ln(hash(seed)/2^{256})}{V}.
 \end{equation}
 
 \begin{algorithm}
@@ -186,17 +187,20 @@ where $V$ is the amount of stake (or voting power) and $\Delta$ is the time elap
     \label{staking_algo}
     \begin{algorithmic}[1]
         \Procedure{FORGEBLOCK}{$\delta, pk, sk$}
-        \State $b_h  \gets \Call{GetHeadBlock}{}$
-        \State $b_s  \gets \Call{GetLastPoSBlock}{b_h}$
-        \State $ts   \gets \Call{GetTimestamp}{b_s}$
-        \State $seed \gets \Call{GetSeed}{b_s}$
-        \State $seed \gets \Call{Sign}{seed, sk}$
-        \State $\Delta \gets d_s \cdot ln(2^{256} / hash(seed)) / V$
+        \State $c     \gets \Call{GetBestChain}{}$
+        \State $b_1   \gets \Call{GetLastPosBlock}{c}$
+        \State $b_2   \gets \Call{GetSecondLastPosBlock}{c}$
+        \State $stake \gets \Call{GetStake}{c, pk}$
+        \State $diff  \gets \Call{GetDifficulty}{b_1, b_2}$
+        \State $ts    \gets \Call{GetTimestamp}{b_1}$
+        \State $seed  \gets \Call{GetSeed}{b_1}$
+        \State $seed  \gets \Call{Sign}{seed, sk}$
+        \State $\Delta \gets diff \cdot \ln(hash(seed)/2^{256}) / stake$
         \Do
             \State $\Call{Sleep}{1}$
         \doWhile{$\phi < ts + \Delta$}
-        \State $t \gets \Call{GetMemPoolTxs}$
-        \State $b \gets \Call{CreateBlockTemplate}{b, t, seed}$
+        \State $txs \gets \Call{GetMemPoolTxs}$
+        \State $b \gets \Call{CreatePosBlockTemplate}{c, txs, seed}$
         \State $b \gets \Call{Finalize}{b, sk}$
         \State $\Call{ImportAndPropagate}{b}$
         \EndProcedure
@@ -212,14 +216,14 @@ where $V$ is the amount of stake (or voting power) and $\Delta$ is the time elap
     \label{fig:stake_state}
 \end{figure}
 
-Voting power $V$ is the active stake for a particular account. The balance of every account is initially unstaked, and therefore does not contribute to $V$. The user must called the $lock()$ function to lock balance. There is then a cycle of maturation that occurs before locked stake becomes active. Note that the concept of maturity is boolean, the locked coins are either matured (in which case they are active stake) or not (see \cref{fig:stake_state}). This is to prevent any staking grinding attacks (see \cref{sec:stake_grinding}) and balance shifting attacks \cite{nxt_wiki}. The withdrawal period lock-up is to facilitate a possible slashing mechanism (see Appendix \ref{appendix:slashing}).
+Voting power $V$ is the active stake for a particular account. The balance of every account is initially unstaked, and therefore does not contribute to $V$. The user must call the $lock()$ function to lock balance. There is then a cycle of maturation that occurs before locked stake becomes active. Note that the concept of maturity is boolean, the locked coins are either matured (in which case they are active stake) or not (see \cref{fig:stake_state}). This is to prevent any staking grinding attacks (see \cref{sec:stake_grinding}) and balance shifting attacks \cite{nxt_wiki}. The withdrawal period lock-up is to facilitate a possible slashing mechanism (see Appendix \ref{appendix:slashing}).
 
 \subsection{Difficulty Adjustment}
 \label{diff_adj}
 
 As discussed in \cite{bitfury2015}, both PoW and PoS block generation time is distributed exponentially. In case of PoW, the rate $\lambda_w$ is equal to $r/d_w$, where $r$ is the hash rate and $d_w$ is the mining difficulty; in PoS, the rate $\lambda_s$ is equal to $b/d_s$, where $b$ is the stake and $d_s$ is the staking difficulty.
 
-The goal of difficulty adjustment algorithm is to achieve a mean target block time of $t$. For a random variable $X \sim Exp(\lambda)$, the mean is $\lambda^{-1}$. Let $\lambda_w^{-1} = 2t$ and $\lambda_s^{-1} = 2t$, then $d_w = r \cdot 2t$ and $d_s = b \cdot 2r$. However, the network hash rate can not be determined by the protocol and changes frequently as miners come and go; the network stake can be calculated but the active stake is unknown due to some of the nodes being offline. Therefore, the difficulties can only be learned.
+The goal of difficulty adjustment algorithm is to achieve a mean target block time of $t$. For a random variable $X \sim Exp(\lambda)$, the mean is $\lambda^{-1}$. Let $\lambda_w^{-1} = 2t$ and $\lambda_s^{-1} = 2t$, then $d_w = r \cdot 2t$ and $d_s = b \cdot 2t$. However, the network hash rate can not be determined by the protocol and changes frequently as miners come and go; the network stake can be calculated but the active stake is unknown due to some of the nodes being offline. Therefore, the difficulties can only be learned.
 
 Ideally, a difficulty adjustment algorithm should have the following common properties:
 \begin{itemize}
@@ -233,8 +237,9 @@ In Unity, a new algorithm is proposed. Let $2t$ be the target time (between PoW 
 \begin{itemize}
     \item $d := 1$;
     \item let $X$ be an exponential random variable with rate $\lambda = \frac{1}{2t}$;
-    \item if $X \geq -\frac{\ln (0.5)}{\lambda}$, then $d = \frac{d}{1 + \alpha}$;
-    \item if $X < -\frac{\ln (0.5)}{\lambda}$, then $d = d \cdot (1 + \alpha)$.
+    \item if $X > -\frac{\ln (0.5)}{\lambda}$, then $d_{t+1} = \frac{d_t}{1 + \alpha}$;
+    \item if $X = -\frac{\ln (0.5)}{\lambda}$, then $d_{t+1} = d_t$;
+    \item if $X < -\frac{\ln (0.5)}{\lambda}$, then $d_{t+1} = d_t \cdot (1 + \alpha)$.
 \end{itemize}
 The $\alpha$ controls the learning rate, which further determines the responsiveness of the algorithm. The $-\frac{\ln (0.5)}{\lambda}$ is calculated by solving the following equation,
 \begin{equation}
@@ -287,26 +292,33 @@ In Unity, it is much more difficult for an attacker with 51\% hash power or 51\%
 
 \subsubsection{Calculations}
 
-Consider the scenario where an attacker tries to generate an alternative chain in private, and reveal it at a later point. Assume the attacker has a relative hash power $p_w$ and a relative stake power $p_s$.
+Consider the scenario where an attacker tries to generate an alternative chain in private, and reveal it at a later point. Assume the attacker has a hash power and stake power $(a, b)$; and the honest nodes has $(c, d)$.
 
-Based on the difficulty adjustment algorithm,  $d_w \to p_w \cdot 2t$ and $d_s \to p_s \cdot 2t$. The difficulty of a PoW/PoS block is eventually proportional to the hash/stake power correspondingly while the number of blocks being generated is irrelevant to that. Thus,
+Based on the analysis in \cite{bitfury2015}, the PoW block generation rate $\lambda_w = \frac{w}{d_w}$, where $w$ is the hash rate. In a period of unit time, the number of blocks will be produced is a random variable $X \sim Pois(\lambda_w)$, and $E(X) = \lambda_w$. Let $Y_w$ be the total mining difficulty, then $E(Y_w) = E(X) * d_w$. Thus,
+$$
+E(Y_w) = \frac{w}{d_w} * d_w = w.
+$$
 
+Similarly, the PoS block generation rate $\lambda_w = \frac{s}{d_s}$, where $s$ is the stake. Let $Y_s$ be the total mining difficulty, then
+$$
+E(Y_s) = \frac{w}{d_s} * d_s = s.
+$$
+
+Thus, the total mining difficulty is an integration of hash rate over time, while the total staking difficulty is an integration of stake over time. Given a time duration $t$, the attacker's chain has an expected weight of
+$$
+(td_{wc} + a \cdot t) \cdot (td_{sc} + b \cdot t)
+$$
+and the honest nodes' chain has
+$$
+(td_{wc} + c \cdot t) \cdot (td_{sc} + d \cdot t),
+$$
+where $td_w$ and $td_s$ are the total mining difficulty and total staking difficulty from the genesis block to the fork point.
+
+For the attacker to overthrow the honest nodes' chain, the attacker's chain has to own a higher weight than the honest nodes' chain, which further leads to the following inequality:
 \begin{equation}
-\begin{split}
-&\begin{aligned}
-td_w \cdot td_s &= \sum_{i = 1..H_w}{d_{wi}} \cdot \sum_{j = 1...H_s}{d_{sj}} \\
-&= (H_w \cdot \overline{d_{w}}) \cdot (H_s \cdot \overline{d_{s}}) \\
-&\propto p_w \cdot p_s
-\end{aligned}
-\end{split}
+\label{eq}
+    td_{sc} \cdot (a - c) + td_{wc} \cdot (b - d) + (ab - cd) \cdot t \geq 0.
 \end{equation}
-
-Where $H_x$ refers to the current height of chain $x$. If the attacker chain wants to be the eventual canonical chain, the following inequality has to be true,
-\begin{equation}
-p_w \cdot p_s > (1 - p_w) \cdot (1 - p_s) \implies p_w + p_s > 1.
-\end{equation}
-
-\todo{Needs more analysis}
 
 \subsection{Nothing-At-Stake}
 \label{sec:nothing_at_stake}
@@ -476,7 +488,7 @@ Different experiments and tests will be explored further in future publications 
 \clearpage
 \begingroup
 \raggedright
-\bibliographystyle{IEEEtran}
+\bibliographystyle{alpha}
 \bibliography{main}
 \endgroup
 
